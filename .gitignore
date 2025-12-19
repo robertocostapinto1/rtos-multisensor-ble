@@ -1,0 +1,18 @@
+# TI-RTOS / CCS garbage
+Debug/
+Release/
+FlashROM_StackLibrary/
+*.obj
+*.out
+*.map
+*.hex
+*.bin
+*.make
+.launches/
+.settings/
+*.ccsproject
+*.cproject
+*.project
+.xdchelp
+*.log
+
