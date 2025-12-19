@@ -24,7 +24,6 @@ This repository contains the firmware implementation for a modular wireless sens
 
 ## System Architecture
 ![Architecture Diagram](docs/domain_architecture.png)
-![Software Dependency Diagram](docs/software_dependency_architecture.png)
 
 ## Build Instructions 
 1.  Install Code Composer Studio (CCS) v12.0+ and SimpleLink CC13xx/CC26xx SDK v5.30.
