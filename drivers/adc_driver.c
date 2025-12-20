@@ -1,4 +1,12 @@
-// adc_driver.c - ADC Sensor Controller Driver
+/* =============================================================================
+ *  File:       adc_driver.c
+ *  
+ *  Description:
+ *      Implementation of the SCIF ADC Driver.
+ *      Handles the high-speed handshake with the Sensor Controller Engine.
+ * =============================================================================
+ */
+ 
 #include "adc_driver.h"
 #include <string.h>
 #include <stdio.h>
