@@ -1,51 +1,56 @@
-// h3l_driver.c - H3LIS331DL High-G Accelerometer Driver
+/*
+ * =============================================================================
+ *  File:       h3l_driver.c
+ *  
+ *  Description:
+ *      Implementation of the H3LIS331DL Driver.
+ * =============================================================================
+ */
+
 #include "h3l_driver.h"
-#include "ism330_driver.h"
 #include <string.h>
 #include <stdio.h>
-#include <ti/drivers/dpl/HwiP.h>
+
+/* TI Drivers */
 #include <ti/drivers/GPIO.h>
-#include "ti_drivers_config.h" 
 #include <ti/sysbios/BIOS.h>
 
+// -----------------------------------------------------------------------------
+// Configuration Tables
+// -----------------------------------------------------------------------------
 const uint16_t acc_odr_map[] = {
-    H3LIS331DL_ODR_Hz5, 
-    H3LIS331DL_ODR_1Hz, 
-    H3LIS331DL_ODR_2Hz,
-    H3LIS331DL_ODR_5Hz, 
-    H3LIS331DL_ODR_10Hz, 
-    H3LIS331DL_ODR_50Hz,
-    H3LIS331DL_ODR_100Hz, 
-    H3LIS331DL_ODR_400Hz, 
-    H3LIS331DL_ODR_1kHz
+    H3LIS331DL_ODR_Hz5, H3LIS331DL_ODR_1Hz, H3LIS331DL_ODR_2Hz,
+    H3LIS331DL_ODR_5Hz, H3LIS331DL_ODR_10Hz, H3LIS331DL_ODR_50Hz,
+    H3LIS331DL_ODR_100Hz, H3LIS331DL_ODR_400Hz, H3LIS331DL_ODR_1kHz
 };
 
 const float acc_odr_freq[] = {
     0.5, 1, 2, 5, 10, 50, 100, 400, 1000
 };
 
-// Global driver context
+// Global Context
 h3l_driver_t g_h3l = {0};
 Semaphore_Handle h3lGlobalSem = NULL;
 
-// PRIVATE HELPERS
+// Private Helpers
 static inline bool h3l_clean_reset(void);
 static inline bool h3l_configure_interrupts(bool enable);
 static inline bool h3l_enable_axes(bool enable);
 static void H3L_interruptCallback(uint_least8_t index);
 
+// External Timestamp Helper
 extern uint32_t getMicrosecondTimestamp(void);
 
-// ============================================================================
-// DIRECT DRIVER IMPLEMENTATION
-// ============================================================================
+// -----------------------------------------------------------------------------
+// Public API Implementation
+// -----------------------------------------------------------------------------
 
 bool H3L_init(platform_i2c_bus_t *i2c_bus)
 {
     if(g_h3l.initialized) return true;
     if(!i2c_bus) return false;
 
-    // 1. Clear Context FIRST
+    // 1. Clear Context 
     memset(&g_h3l, 0, sizeof(h3l_driver_t));
 
     // 2. Init Ring Buffer
@@ -54,23 +59,17 @@ bool H3L_init(platform_i2c_bus_t *i2c_bus)
             sizeof(g_h3l.storage), 
             &g_h3l.stats);
 
-    // Create global semaphore ONCE
+    // 3. Create Semaphore
     if (h3lGlobalSem == NULL) {
         Semaphore_Params semParams;
         Semaphore_Params_init(&semParams);
-        //semParams.mode = Semaphore_Mode_BINARY_PRIORITY;
-        
         h3lGlobalSem = Semaphore_create(0, &semParams, NULL);
-        
-        if (!h3lGlobalSem) {
-            printf("H3L: Cannot create global semaphore\n");
-            return false;
-        }
+
+        if(!h3lGlobalSem) return false;
     }
-    // Assign to context
     g_h3l.drdy_sem = h3lGlobalSem;
 
-    // 4. Setup I2C
+    // 4. Setup I2C Context
     g_h3l.dev_ctx.write_reg = I2C_platformWrite;
     g_h3l.dev_ctx.read_reg = I2C_platformRead;
     g_h3l.dev_ctx.mdelay = SensorsPlatform_delay;
@@ -90,10 +89,10 @@ bool H3L_init(platform_i2c_bus_t *i2c_bus)
         return false;
     }
 
-    // 6. Reset & Config
+    // 6. Reset 
     h3l_clean_reset();  
 
-    // Configure device  
+    // 7. Configure device  
     h3lis331dl_block_data_update_set(&g_h3l.dev_ctx, PROPERTY_ENABLE);
     h3lis331dl_pin_mode_set(&g_h3l.dev_ctx, H3LIS331DL_PUSH_PULL);
     h3lis331dl_pin_polarity_set(&g_h3l.dev_ctx, H3LIS331DL_ACTIVE_HIGH);
@@ -104,15 +103,13 @@ bool H3L_init(platform_i2c_bus_t *i2c_bus)
     h3lis331dl_int1_notification_set(&g_h3l.dev_ctx, H3LIS331DL_INT1_LATCHED);
     h3lis331dl_pin_int1_route_set(&g_h3l.dev_ctx, H3LIS331DL_PAD1_DRDY);
         
-    // Register GPIO
-    GPIO_setCallback(CONFIG_GPIO_INT_H3L, H3L_interruptCallback);
+    GPIO_setCallback(CONFIG_GPIO_INT_H3L, H3L_interruptCallback); 
 
     g_h3l.odr_index = 0;
     g_h3l.initialized = true;
     g_h3l.powered = false;
     
     printf("[H3L] Driver initialized! \n");
-
     return true;
 }
 
@@ -123,33 +120,23 @@ bool H3L_startStreaming(void)
     H3L_resetStats();
     g_h3l.powered = true;
    
-    // Set ODR 
-    if(h3lis331dl_data_rate_set(&g_h3l.dev_ctx, acc_odr_map[g_h3l.odr_index]) != 0) return false;
-    
-    // Enable axes
+    if (h3lis331dl_data_rate_set(&g_h3l.dev_ctx, acc_odr_map[g_h3l.odr_index]) != 0) return false;    
     if (!h3l_enable_axes(true)) return false;
-  
-    // Enable Interrupts
     if (!h3l_configure_interrupts(true)) return false;
 
-    // Enable GPIO
     GPIO_enableInt(CONFIG_GPIO_INT_H3L);
 
-    // CALC TIMEOUT & PERIOD (Float Precision)
+    // Calc Timeout for Watchdog and Timing for Implicit Timestamping
     float freq = acc_odr_freq[g_h3l.odr_index];
-    if (freq > 0) {
+    if (freq > 0) 
+    {
         g_h3l.us_per_sample = 1000000.0 / (double)freq;
         
-        // Base ticks = Period in microseconds / 10 (assuming 10us tick)
+        // Ticks = us / 10 (assuming 10us clock tick)
         float base_ticks = (float)g_h3l.us_per_sample / 10.0f;
-        
-        // Store the exact period in ticks. 
-        // The Task applies the +20% margin dynamically.
         g_h3l.timeout_ticks = (uint32_t)base_ticks;
-        
         if (g_h3l.timeout_ticks == 0) g_h3l.timeout_ticks = 1;
     } 
-
     return true;
 }
 
@@ -163,7 +150,6 @@ bool H3L_stopStreaming(void)
     h3l_enable_axes(false);
     
     g_h3l.powered = false;
-
     return true;
 }
 
@@ -183,42 +169,30 @@ bool H3L_reconfigureOdr(uint32_t index)
     if (g_h3l.powered)
     {
        float freq = acc_odr_freq[g_h3l.odr_index];
-        if (freq > 0) {
+        if (freq > 0) 
+        {
             g_h3l.us_per_sample = 1000000.0 / (double)freq;
             
-            // Base ticks = Period in microseconds / 10 (assuming 10us tick)
             float base_ticks = (float)g_h3l.us_per_sample / 10.0f;
-            
-            // Store the exact period in ticks. 
-            // The Task applies the +20% margin dynamically.
             g_h3l.timeout_ticks = (uint32_t)base_ticks;
             
             if (g_h3l.timeout_ticks == 0) g_h3l.timeout_ticks = 1;
         } 
-
-        // 3. Write H3L Register
         return (h3lis331dl_data_rate_set(&g_h3l.dev_ctx, acc_odr_map[g_h3l.odr_index]) == 0);
     } 
-
     return true;
 }
 
 
-// ============================================================================
-// DATA PATH
-// ============================================================================
-
-// DATA PATH WITH RE-SYNC LOGIC
 void H3L_writeBuffer(uint8_t* data, uint16_t len)
 {
     if (g_h3l.powered) 
     {
-        // RE-SYNC
+        // Hardware Anchor: Capture time if buffer was empty
         if (rb_available(&g_h3l.buffer) == 0) 
         {
             g_h3l.oldest_sample_timestamp = (double)getMicrosecondTimestamp();
         }
-
         rb_write(&g_h3l.buffer, data, len);
     }
 }
@@ -240,10 +214,9 @@ void H3L_resetStats(void)
     g_h3l.buffer.tail = 0;
 }
 
-// ============================================================================
-// HELPERS & INTERRUPTS
-// ============================================================================
-
+/**
+ * @brief Hardware ISR for Data Ready. Posts Semaphore.
+ */
 static void H3L_interruptCallback(uint_least8_t index)
 {   
     if (g_h3l.initialized && g_h3l.powered && g_h3l.drdy_sem) 
@@ -252,9 +225,12 @@ static void H3L_interruptCallback(uint_least8_t index)
     }
 }
 
+// ============================================================================
+// Private Helpers Implementation
+// ============================================================================
+
 static inline bool h3l_clean_reset(void)
 {
-    // Register resets
     uint8_t zero = 0x00;
     h3lis331dl_write_reg(&g_h3l.dev_ctx, H3LIS331DL_CTRL_REG1, &zero, 1);
     h3lis331dl_write_reg(&g_h3l.dev_ctx, H3LIS331DL_CTRL_REG3, &zero, 1);
@@ -268,21 +244,19 @@ static inline bool h3l_configure_interrupts(bool enable)
 {
     uint8_t ctrl_reg3;
     
-    // Read current CTRL_REG3
-    if (h3lis331dl_read_reg(&g_h3l.dev_ctx, H3LIS331DL_CTRL_REG3, &ctrl_reg3, 1) != 0) 
-    {
-        return false;
-    }
+    if (h3lis331dl_read_reg(&g_h3l.dev_ctx, 
+                      H3LIS331DL_CTRL_REG3, 
+                               &ctrl_reg3, 
+                                         1) != 0) return false;
+
     
-    // Set or clear I1_DRDY bit (bit 4)
-    if (enable) {
-        ctrl_reg3 |= (1 << 4);   // Enable DRDY interrupt on INT1
-    } else {
-        ctrl_reg3 &= ~(1 << 4);  // Disable DRDY interrupt
-    }
+    if (enable) ctrl_reg3 |= (1 << 4);   // Enable I1_DRDY
+    else        ctrl_reg3 &= ~(1 << 4);  // Disable
     
-    // Write back
-    return (h3lis331dl_write_reg(&g_h3l.dev_ctx, H3LIS331DL_CTRL_REG3, &ctrl_reg3, 1) == 0);
+    return (h3lis331dl_write_reg(&g_h3l.dev_ctx, 
+                           H3LIS331DL_CTRL_REG3, 
+                                    &ctrl_reg3, 
+                                              1) == 0);
 }
 
 
@@ -290,15 +264,17 @@ static inline bool h3l_enable_axes(bool enable)
 {
     uint8_t ctrl_reg1;
     
-    if (h3lis331dl_read_reg(&g_h3l.dev_ctx, H3LIS331DL_CTRL_REG1, &ctrl_reg1, 1) != 0) {
-        return false;
-    }
+    if (h3lis331dl_read_reg(&g_h3l.dev_ctx, 
+                      H3LIS331DL_CTRL_REG1, 
+                               &ctrl_reg1, 
+                                         1) != 0) return false;
     
-    if (enable) {
-        ctrl_reg1 |= 0x07;  // Enable X, Y, Z axes
-    } else {
-        ctrl_reg1 &= ~0x07; // Disable X, Y, Z axes
-    }
     
-    return (h3lis331dl_write_reg(&g_h3l.dev_ctx, H3LIS331DL_CTRL_REG1, &ctrl_reg1, 1) == 0);
+    if (enable) ctrl_reg1 |= 0x07;  // Enable X, Y, Z axes
+    else        ctrl_reg1 &= ~0x07; // Disable X, Y, Z axes
+    
+    return (h3lis331dl_write_reg(&g_h3l.dev_ctx, 
+                           H3LIS331DL_CTRL_REG1, 
+                                    &ctrl_reg1, 
+                                              1) == 0);
 }

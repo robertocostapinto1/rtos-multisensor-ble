@@ -1,56 +1,77 @@
+/*
+ * =============================================================================
+ *  File:       ism330_driver.h
+ *  
+ *  Description:
+ *      Driver for the ISM330DHCX 6-DoF IMU.
+ *      Manages FIFO batching and burst-read operations.
+ * =============================================================================
+ */
+
 #ifndef ISM330_DRIVER_H
 #define ISM330_DRIVER_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// -----------------------------------------------------------------------------
+// Includes
+// -----------------------------------------------------------------------------
 #include <stdint.h>
 #include <stdbool.h>
 #include <ti/sysbios/knl/Semaphore.h>
-#include "sensor_platform.h"
-#include "ism330dhcx_reg.h"
-#include "ring_buffer.h" // The new unified file
 
-// --- FIFO CONFIGURATION ---
+#include "sensor_platform.h"
+#include "ring_buffer.h"
+#include "/vendor/ism330dhcx_reg.h"
+
+// -----------------------------------------------------------------------------
+// Configuration
+// -----------------------------------------------------------------------------
+
 #define ISM_BYTES_PER_SAMPLE    7   
 
 // TRIGGER LEVEL: 6 samples * 3.5 words/sample = 21 words
-
 // 120 words = 240 bytes = 34.2 samples
 // 140 words = 280 bytes = 40 samples 
 // 175 words = 350 bytes = 50 samples
 // 350 words = 700 bytes = 100 samples 
 // CONSTANTS FOR WATERMARK
-
 #define ISM_FIFO_WTM_WORDS      120
 
-// Global instance
-extern struct ism330_driver_s g_ism330;
+// -----------------------------------------------------------------------------
+// Structures
+// -----------------------------------------------------------------------------
 
-// ODR mapping (exposed for system monitor)
-extern const uint16_t gyr_odr_map[];
-extern const float gyr_odr_freq[];
+typedef struct {
+    // Buffering
+    uint8_t             storage[1024];               
+    ring_buffer_t       buffer;                     
+    stream_metrics_t    stats;                      
 
-typedef struct ism330_driver_s {
-    // 1. Unified Ring Buffer Components
-    uint8_t             storage[1024];               // Memory (Power of 2, 1024 is safer for 833Hz+)
-    ring_buffer_t       buffer;                     // Interface
-    stream_metrics_t    stats;                      // Metrics (Overflows, Bytes Sent, etc)
-
-    // 2. Hardware/RTOS Handles
+    // State
     bool                initialized;
     bool                powered;
     uint8_t             odr_index;
 
-    // TIMESTAMP LOGIC (Revised to double)
+    // Timing
     double              oldest_sample_timestamp; 
     double              us_per_sample;
-    
+
+    // Hardware Handles
     stmdev_ctx_t        dev_ctx;
     platform_i2c_bus_t* i2c_bus;
     Semaphore_Handle    drdy_sem;
 } ism330_driver_t;
 
-// ============================================================================
-// PUBLIC API
-// ============================================================================
+// Global Singleton
+extern ism330_driver_t g_ism330;
+
+// -----------------------------------------------------------------------------
+// Public API
+// -----------------------------------------------------------------------------
+
 bool ISM330_init(platform_i2c_bus_t* i2c_bus);
 bool ISM330_startStreaming(void);
 bool ISM330_stopStreaming(void);
@@ -63,5 +84,9 @@ int32_t ISM330_readFifoBatch_Block(uint8_t* buffer, uint16_t total_bytes);
 uint16_t ISM330_getAvailableBytes(void);
 void ISM330_getStats(stream_metrics_t* stats_out);
 void ISM330_resetStats(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // ISM330_DRIVER_H

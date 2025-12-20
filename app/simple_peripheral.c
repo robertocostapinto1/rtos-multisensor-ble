@@ -16,7 +16,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <gap.h>
-#include "scif.h"
+#include "/scif/scif.h"
 
 #include <ti/sysbios/knl/Task.h>
 #include <ti/sysbios/knl/Clock.h>
@@ -62,7 +62,7 @@
  * REFACTOR INCLUDES
  */
 //#include "/core/sensor_manager.h"
-#include "/tasks/sensor_tasks.h"
+#include "sensor_tasks.h"
 #include "/drivers/ism330_driver.h"
 #include "/drivers/h3l_driver.h"
 #include "/drivers/adc_driver.h"
@@ -88,7 +88,7 @@
 #define SP_ADV_EVT                           2 /* A subscribed advertisement activity         */
 #define SP_PAIR_STATE_EVT                    3 /* The pairing state is updated                */
 #define SP_PASSCODE_EVT                      4 /* A pass-code/PIN is requested during pairing */
-#define SP_PERIODIC_EVT                      5
+#define SP_PERIODIC_EVT                      5 /* Periodic event                              */
 #define SP_READ_RPA_EVT                      6 /* Read RPA event                              */
 #define SP_SEND_PARAM_UPDATE_EVT             7 /* Request parameter update req be sent        */
 #define SP_CONN_EVT                          8 /* Connection Event End notice                 */
@@ -378,12 +378,8 @@ static uint16_t phyOptions = LL_PHY_OPT_NONE;
 extern platform_i2c_bus_t gIsmBus, gH3lBus;
 
 extern ism330_driver_t g_ism330;  
-extern const uint16_t gyr_odr_map[]; 
-extern const float gyr_odr_freq[];
 
 extern h3l_driver_t g_h3l;
-extern const uint16_t acc_odr_map[];
-extern const float acc_odr_freq[];
 
 extern adc_driver_t g_adc;
 
